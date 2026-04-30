@@ -1,6 +1,11 @@
 # agent/providers/base.py — Clase base para proveedores de WhatsApp
 # Generado por AgentKit
 
+"""
+Define la interfaz común que todos los proveedores de WhatsApp deben implementar.
+Esto permite cambiar de proveedor sin modificar el resto del código.
+"""
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from fastapi import Request

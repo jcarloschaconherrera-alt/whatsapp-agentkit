@@ -2,8 +2,8 @@
 # Generado por AgentKit
 
 """
-Prueba el Asistente Leo Guadarrama sin necesitar WhatsApp.
-Simula una conversación en la terminal como si fueras un cliente.
+Prueba tu agente sin necesitar WhatsApp.
+Simula una conversación en la terminal.
 """
 
 import asyncio
@@ -24,21 +24,21 @@ async def main():
     await inicializar_db()
 
     print()
-    print("=" * 60)
-    print("   Asistente Leo Guadarrama — Test Local")
-    print("=" * 60)
+    print("=" * 55)
+    print("   AgentKit — Test Local | Leo Guadarrama Academy")
+    print("=" * 55)
     print()
-    print("  Escribe mensajes como si fueras un prospecto o alumno.")
+    print("  Escribe mensajes como si fueras un cliente.")
     print("  Comandos especiales:")
-    print("    'limpiar'  — borra el historial de esta sesión")
+    print("    'limpiar'  — borra el historial")
     print("    'salir'    — termina el test")
     print()
-    print("-" * 60)
+    print("-" * 55)
     print()
 
     while True:
         try:
-            mensaje = input("Tú: ").strip()
+            mensaje = input("Tu: ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n\nTest finalizado.")
             break
@@ -52,19 +52,19 @@ async def main():
 
         if mensaje.lower() == "limpiar":
             await limpiar_historial(TELEFONO_TEST)
-            print("[Historial borrado — nueva conversación]\n")
+            print("[Historial borrado]\n")
             continue
 
-        # Obtener historial ANTES de guardar el mensaje actual
+        # Obtener historial ANTES de guardar (brain.py agrega el mensaje actual)
         historial = await obtener_historial(TELEFONO_TEST)
 
-        # Generar respuesta del Asistente Leo Guadarrama
+        # Generar respuesta
         print("\nAsistente Leo Guadarrama: ", end="", flush=True)
         respuesta = await generar_respuesta(mensaje, historial)
         print(respuesta)
         print()
 
-        # Guardar el intercambio
+        # Guardar mensaje del usuario y respuesta del agente
         await guardar_mensaje(TELEFONO_TEST, "user", mensaje)
         await guardar_mensaje(TELEFONO_TEST, "assistant", respuesta)
 

@@ -1,10 +1,16 @@
 # agent/main.py — Servidor FastAPI + Webhook de WhatsApp
 # Generado por AgentKit
 
+"""
+Servidor principal del agente de WhatsApp.
+Funciona con cualquier proveedor (Whapi, Meta, Twilio) gracias a la capa de providers.
+"""
+
 import os
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import PlainTextResponse
 from dotenv import load_dotenv
 
 from agent.brain import generar_respuesta
@@ -13,16 +19,13 @@ from agent.providers import obtener_proveedor
 
 load_dotenv()
 
-# Configuración de logging
+# Configuración de logging según entorno
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 log_level = logging.DEBUG if ENVIRONMENT == "development" else logging.INFO
-logging.basicConfig(
-    level=log_level,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
+logging.basicConfig(level=log_level)
 logger = logging.getLogger("agentkit")
 
-# Proveedor de WhatsApp (Meta Cloud API según .env)
+# Proveedor de WhatsApp (se configura en .env con WHATSAPP_PROVIDER)
 proveedor = obtener_proveedor()
 PORT = int(os.getenv("PORT", 8000))
 
@@ -32,14 +35,13 @@ async def lifespan(app: FastAPI):
     """Inicializa la base de datos al arrancar el servidor."""
     await inicializar_db()
     logger.info("Base de datos inicializada")
-    logger.info(f"Agente: Asistente Leo Guadarrama")
-    logger.info(f"Proveedor: {proveedor.__class__.__name__}")
-    logger.info(f"Puerto: {PORT}")
+    logger.info(f"Servidor AgentKit corriendo en puerto {PORT}")
+    logger.info(f"Proveedor de WhatsApp: {proveedor.__class__.__name__}")
     yield
 
 
 app = FastAPI(
-    title="Asistente Leo Guadarrama — WhatsApp AI Agent",
+    title="AgentKit — WhatsApp AI Agent",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -47,34 +49,27 @@ app = FastAPI(
 
 @app.get("/")
 async def health_check():
-    """Endpoint de salud para Railway y monitoreo."""
-    return {
-        "status": "ok",
-        "agente": "Asistente Leo Guadarrama",
-        "version": "1.0.0"
-    }
+    """Endpoint de salud para monitoreo."""
+    return {"status": "ok", "service": "agentkit"}
 
 
 @app.get("/webhook")
 async def webhook_verificacion(request: Request):
-    """
-    Verificación GET del webhook — requerido por Meta Cloud API.
-    Meta llama a este endpoint para confirmar que el servidor existe.
-    """
+    """Verificación GET del webhook (requerido por Meta Cloud API, no-op para otros)."""
     resultado = await proveedor.validar_webhook(request)
     if resultado is not None:
-        return resultado
+        return PlainTextResponse(str(resultado))
     return {"status": "ok"}
 
 
 @app.post("/webhook")
 async def webhook_handler(request: Request):
     """
-    Recibe mensajes de WhatsApp via Meta Cloud API.
+    Recibe mensajes de WhatsApp via el proveedor configurado.
     Procesa el mensaje, genera respuesta con Claude y la envía de vuelta.
     """
     try:
-        # Parsear webhook — el proveedor normaliza el formato de Meta
+        # Parsear webhook — el proveedor normaliza el formato
         mensajes = await proveedor.parsear_webhook(request)
 
         for msg in mensajes:
@@ -82,24 +77,22 @@ async def webhook_handler(request: Request):
             if msg.es_propio or not msg.texto:
                 continue
 
-            logger.info(f"Mensaje de {msg.telefono}: {msg.texto[:50]}...")
+            logger.info(f"Mensaje de {msg.telefono}: {msg.texto}")
 
             # Obtener historial ANTES de guardar el mensaje actual
             historial = await obtener_historial(msg.telefono)
 
-            # Generar respuesta con Claude (Asistente Leo Guadarrama)
+            # Generar respuesta con Claude
             respuesta = await generar_respuesta(msg.texto, historial)
 
-            # Guardar mensaje del usuario Y respuesta del agente
+            # Guardar mensaje del usuario Y respuesta del agente en memoria
             await guardar_mensaje(msg.telefono, "user", msg.texto)
             await guardar_mensaje(msg.telefono, "assistant", respuesta)
 
-            # Enviar respuesta por WhatsApp
-            exito = await proveedor.enviar_mensaje(msg.telefono, respuesta)
-            if exito:
-                logger.info(f"Respuesta enviada a {msg.telefono}")
-            else:
-                logger.error(f"Error enviando a {msg.telefono}")
+            # Enviar respuesta por WhatsApp via el proveedor
+            await proveedor.enviar_mensaje(msg.telefono, respuesta)
+
+            logger.info(f"Respuesta a {msg.telefono}: {respuesta}")
 
         return {"status": "ok"}
 

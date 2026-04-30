@@ -1,6 +1,11 @@
 # agent/memory.py — Memoria de conversaciones con SQLite
 # Generado por AgentKit
 
+"""
+Sistema de memoria del agente. Guarda el historial de conversaciones
+por número de teléfono usando SQLite (local) o PostgreSQL (producción).
+"""
+
 import os
 from datetime import datetime
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -31,7 +36,7 @@ class Mensaje(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     telefono: Mapped[str] = mapped_column(String(50), index=True)
-    role: Mapped[str] = mapped_column(String(20))   # "user" o "assistant"
+    role: Mapped[str] = mapped_column(String(20))  # "user" o "assistant"
     content: Mapped[str] = mapped_column(Text)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -64,7 +69,7 @@ async def obtener_historial(telefono: str, limite: int = 20) -> list[dict]:
         limite: Máximo de mensajes a recuperar (default: 20)
 
     Returns:
-        Lista de diccionarios con role y content, en orden cronológico
+        Lista de diccionarios con role y content
     """
     async with async_session() as session:
         query = (
@@ -76,7 +81,7 @@ async def obtener_historial(telefono: str, limite: int = 20) -> list[dict]:
         result = await session.execute(query)
         mensajes = result.scalars().all()
 
-        # Invertir para orden cronológico
+        # Invertir para orden cronológico (los más recientes están primero)
         mensajes.reverse()
 
         return [

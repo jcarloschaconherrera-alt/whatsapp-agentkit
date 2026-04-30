@@ -1,6 +1,11 @@
 # agent/brain.py — Cerebro del agente: conexión con Claude API
 # Generado por AgentKit
 
+"""
+Lógica de IA del agente. Lee el system prompt de prompts.yaml
+y genera respuestas usando la API de Anthropic Claude.
+"""
+
 import os
 import yaml
 import logging
@@ -59,12 +64,13 @@ async def generar_respuesta(mensaje: str, historial: list[dict]) -> str:
     Returns:
         La respuesta generada por Claude
     """
+    # Si el mensaje es muy corto o vacío, usar fallback
     if not mensaje or len(mensaje.strip()) < 2:
         return obtener_mensaje_fallback()
 
     system_prompt = cargar_system_prompt()
 
-    # Construir lista de mensajes para la API
+    # Construir mensajes para la API
     mensajes = []
     for msg in historial:
         mensajes.append({
@@ -72,7 +78,7 @@ async def generar_respuesta(mensaje: str, historial: list[dict]) -> str:
             "content": msg["content"]
         })
 
-    # Agregar el mensaje actual del usuario
+    # Agregar el mensaje actual
     mensajes.append({
         "role": "user",
         "content": mensaje
@@ -88,9 +94,7 @@ async def generar_respuesta(mensaje: str, historial: list[dict]) -> str:
 
         respuesta = response.content[0].text
         logger.info(
-            f"Respuesta generada — "
-            f"{response.usage.input_tokens} tokens entrada / "
-            f"{response.usage.output_tokens} tokens salida"
+            f"Respuesta generada ({response.usage.input_tokens} in / {response.usage.output_tokens} out)"
         )
         return respuesta
 

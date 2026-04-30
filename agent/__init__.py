@@ -1,1 +1,2 @@
-# agent/__init__.py — Package init
+# agent/__init__.py — Package del agente
+# Generado por AgentKit
