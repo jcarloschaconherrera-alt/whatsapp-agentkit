@@ -11,6 +11,9 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
 
 from agent.brain import generar_respuesta
@@ -29,6 +32,9 @@ logger = logging.getLogger("agentkit")
 proveedor = obtener_proveedor()
 PORT = int(os.getenv("PORT", 8000))
 
+# Rate limiter — clave por IP real (respeta X-Forwarded-For de proxies/Railway)
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -46,14 +52,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 
 @app.get("/")
-async def health_check():
+@limiter.limit("60/minute")
+async def health_check(request: Request):
     """Endpoint de salud para monitoreo."""
     return {"status": "ok", "service": "agentkit"}
 
 
 @app.get("/webhook")
+@limiter.limit("10/minute")
 async def webhook_verificacion(request: Request):
     """Verificación GET del webhook (requerido por Meta Cloud API, no-op para otros)."""
     resultado = await proveedor.validar_webhook(request)
@@ -63,6 +74,7 @@ async def webhook_verificacion(request: Request):
 
 
 @app.post("/webhook")
+@limiter.limit("30/minute")
 async def webhook_handler(request: Request):
     """
     Recibe mensajes de WhatsApp via el proveedor configurado.
