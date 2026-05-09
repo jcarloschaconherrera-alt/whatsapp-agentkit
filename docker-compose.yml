@@ -9,4 +9,5 @@ services:
     volumes:
       - ./knowledge:/app/knowledge
       - ./config:/app/config
+      - ./data:/app/data
     restart: unless-stopped
