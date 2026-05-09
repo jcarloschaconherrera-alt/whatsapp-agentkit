@@ -9,15 +9,16 @@ Funciona con cualquier proveedor (Whapi, Meta, Twilio) gracias a la capa de prov
 import os
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import PlainTextResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
 
+from fastapi.security import APIKeyHeader
 from agent.brain import generar_respuesta
-from agent.memory import inicializar_db, guardar_mensaje, obtener_historial
+from agent.memory import inicializar_db, guardar_mensaje, obtener_historial, obtener_todos_contactos, obtener_conversacion_completa
 from agent.providers import obtener_proveedor
 
 load_dotenv()
@@ -54,6 +55,14 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+CRM_API_KEY = os.getenv("CRM_API_KEY", "")
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def verificar_crm_key(key: str = Depends(api_key_header)):
+    if not CRM_API_KEY or key != CRM_API_KEY:
+        raise HTTPException(status_code=401, detail="API key inválida")
 
 
 @app.get("/")
@@ -111,3 +120,19 @@ async def webhook_handler(request: Request):
     except Exception as e:
         logger.error(f"Error en webhook: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/conversations")
+@limiter.limit("30/minute")
+async def listar_contactos(request: Request, _=Depends(verificar_crm_key)):
+    """CRM — lista todos los contactos con su último mensaje."""
+    contactos = await obtener_todos_contactos()
+    return {"contactos": contactos}
+
+
+@app.get("/api/conversations/{telefono:path}")
+@limiter.limit("30/minute")
+async def ver_conversacion(telefono: str, request: Request, _=Depends(verificar_crm_key)):
+    """CRM — conversación completa de un contacto."""
+    mensajes = await obtener_conversacion_completa(telefono)
+    return {"telefono": telefono, "mensajes": mensajes}

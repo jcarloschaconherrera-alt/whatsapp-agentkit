@@ -90,6 +90,35 @@ async def obtener_historial(telefono: str, limite: int = 20) -> list[dict]:
         ]
 
 
+async def obtener_todos_contactos() -> list[dict]:
+    """Retorna lista de contactos únicos con su último mensaje y conteo total."""
+    async with async_session() as session:
+        query = select(Mensaje).order_by(Mensaje.timestamp.asc())
+        result = await session.execute(query)
+        mensajes = result.scalars().all()
+
+        contactos: dict[str, dict] = {}
+        for msg in mensajes:
+            tel = msg.telefono
+            if tel not in contactos:
+                contactos[tel] = {"telefono": tel, "total": 0, "ultimo_mensaje": "", "ultimo_timestamp": "", "ultimo_role": ""}
+            contactos[tel]["total"] += 1
+            contactos[tel]["ultimo_mensaje"] = msg.content
+            contactos[tel]["ultimo_timestamp"] = msg.timestamp.isoformat()
+            contactos[tel]["ultimo_role"] = msg.role
+
+        return sorted(contactos.values(), key=lambda x: x["ultimo_timestamp"], reverse=True)
+
+
+async def obtener_conversacion_completa(telefono: str) -> list[dict]:
+    """Retorna todos los mensajes de un contacto en orden cronológico."""
+    async with async_session() as session:
+        query = select(Mensaje).where(Mensaje.telefono == telefono).order_by(Mensaje.timestamp.asc())
+        result = await session.execute(query)
+        mensajes = result.scalars().all()
+        return [{"role": m.role, "content": m.content, "timestamp": m.timestamp.isoformat()} for m in mensajes]
+
+
 async def limpiar_historial(telefono: str):
     """Borra todo el historial de una conversación."""
     async with async_session() as session:
