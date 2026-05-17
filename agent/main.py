@@ -214,19 +214,21 @@ async def webhook_handler(request: Request):
             await guardar_mensaje(msg.telefono, "user", msg.texto)
             await guardar_mensaje(msg.telefono, "assistant", respuesta)
 
-            # Enviar respuesta por WhatsApp via el proveedor
-            await proveedor.enviar_mensaje(msg.telefono, respuesta)
-
-            # Enviar video de bienvenida del Reto 200→400 una sola vez por lead.
+            # Reto 200→400: primero enviar video de bienvenida, luego los pasos de registro.
             if video_reto_pendiente:
                 enviado = await proveedor.enviar_media(
                     msg.telefono,
                     video_reto_url,
-                    "Bienvenido al Reto de 200 a 400 👇"
+                    ""
                 )
                 if enviado:
                     notas_reto = anexar_marca_notas(notas_reto, VIDEO_BIENVENIDA_RETO_MARKER)
                     await guardar_dato_lead(msg.telefono, "notas", notas_reto)
+
+            # Enviar respuesta por WhatsApp via el proveedor
+            # Para el Reto, esta respuesta incluye Paso 1: link referido del broker + video YouTube,
+            # y Paso 2: fondear la cuenta con $200 USD.
+            await proveedor.enviar_mensaje(msg.telefono, respuesta)
 
             # Detectar trigger de sesión → enviar video + programar follow-up
             if es_trigger_sesion(msg.texto):
