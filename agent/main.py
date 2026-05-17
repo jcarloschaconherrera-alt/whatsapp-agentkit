@@ -9,8 +9,10 @@ Funciona con cualquier proveedor (Whapi, Meta, Twilio) gracias a la capa de prov
 import os
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -45,6 +47,10 @@ logger = logging.getLogger("agentkit")
 # Proveedor de WhatsApp (se configura en .env con WHATSAPP_PROVIDER)
 proveedor = obtener_proveedor()
 PORT = int(os.getenv("PORT", 8000))
+BASE_DIR = Path(__file__).resolve().parent.parent
+MEDIA_DIR = BASE_DIR / "media"
+VIDEO_BIENVENIDA_RETO_FILENAME = "bienvenida-reto-200-400.mp4"
+VIDEO_BIENVENIDA_RETO_MARKER = "video_bienvenida_reto_enviado=true"
 
 # Rate limiter — clave por IP real (respeta X-Forwarded-For de proxies/Railway)
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
@@ -72,8 +78,51 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+if MEDIA_DIR.exists():
+    app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
+
 CRM_API_KEY = os.getenv("CRM_API_KEY", "")
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def valor_env_publico(nombre: str) -> str:
+    """Lee una variable de entorno e ignora placeholders comunes."""
+    valor = os.getenv(nombre, "").strip()
+    if valor.lower() in {"", "pendiente", "pending", "todo", "none", "null"}:
+        return ""
+    return valor
+
+
+def obtener_video_bienvenida_reto_url(request: Request) -> str:
+    """Retorna la URL pública del video de bienvenida del Reto 200→400."""
+    url_configurada = (
+        valor_env_publico("VIDEO_BIENVENIDA_RETO_URL")
+        or valor_env_publico("VIDEO_BIENVENIDA_URL")
+    )
+    if url_configurada:
+        return url_configurada
+
+    video_local = MEDIA_DIR / VIDEO_BIENVENIDA_RETO_FILENAME
+    if not video_local.exists():
+        return ""
+
+    base_url = valor_env_publico("PUBLIC_BASE_URL").rstrip("/")
+    if not base_url and ENVIRONMENT == "production":
+        base_url = "https://leoguadarrama.com"
+    if not base_url:
+        base_url = str(request.base_url).rstrip("/")
+    return f"{base_url}/media/{VIDEO_BIENVENIDA_RETO_FILENAME}"
+
+
+def anexar_marca_notas(notas: str | None, *marcas: str) -> str:
+    """Agrega marcas a notas sin duplicarlas."""
+    partes = [notas.strip()] if notas and notas.strip() else []
+    texto_actual = "\n".join(partes)
+    for marca in marcas:
+        if marca and marca not in texto_actual:
+            partes.append(marca)
+            texto_actual = "\n".join(partes)
+    return "\n".join(partes)
 
 
 def es_trigger_sesion(texto: str) -> bool:
@@ -137,17 +186,27 @@ async def webhook_handler(request: Request):
 
             # Crear perfil de lead si es el primer contacto (idempotente — no duplica)
             fuente = os.getenv("FUENTE_DEFAULT", "whatsapp")
-            await crear_lead(msg.telefono, fuente=fuente)
+            lead = await crear_lead(msg.telefono, fuente=fuente)
 
             # Obtener historial ANTES de guardar el mensaje actual
             historial = await obtener_historial(msg.telefono)
+
+            video_reto_pendiente = False
+            video_reto_url = ""
+            notas_reto = lead.notas or ""
 
             # Reto 200→400: respuesta determinística para usar el referido correcto (Leo/Josue)
             if es_trigger_reto_inicial(msg.texto):
                 ref_reto = detectar_ref_reto(msg.texto)
                 respuesta = construir_mensaje_reto_inicial(msg.texto)
-                await guardar_dato_lead(msg.telefono, "notas", f"ref_reto={ref_reto}")
+                notas_reto = anexar_marca_notas(notas_reto, f"ref_reto={ref_reto}")
+                await guardar_dato_lead(msg.telefono, "notas", notas_reto)
                 await actualizar_etapa_reto(msg.telefono, "paso1_enviado")
+
+                video_reto_url = obtener_video_bienvenida_reto_url(request)
+                video_reto_pendiente = bool(
+                    video_reto_url and VIDEO_BIENVENIDA_RETO_MARKER not in notas_reto
+                )
             else:
                 # Generar respuesta con Claude (pasa telefono para extracción silenciosa de datos)
                 respuesta = await generar_respuesta(msg.texto, historial, telefono=msg.telefono)
@@ -158,6 +217,17 @@ async def webhook_handler(request: Request):
 
             # Enviar respuesta por WhatsApp via el proveedor
             await proveedor.enviar_mensaje(msg.telefono, respuesta)
+
+            # Enviar video de bienvenida del Reto 200→400 una sola vez por lead.
+            if video_reto_pendiente:
+                enviado = await proveedor.enviar_media(
+                    msg.telefono,
+                    video_reto_url,
+                    "Bienvenido al Reto de 200 a 400 👇"
+                )
+                if enviado:
+                    notas_reto = anexar_marca_notas(notas_reto, VIDEO_BIENVENIDA_RETO_MARKER)
+                    await guardar_dato_lead(msg.telefono, "notas", notas_reto)
 
             # Detectar trigger de sesión → enviar video + programar follow-up
             if es_trigger_sesion(msg.texto):
