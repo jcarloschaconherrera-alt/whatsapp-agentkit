@@ -20,4 +20,4 @@ agente:
 metadata:
   creado: "2026-04-18"
   version: "1.0"
-  proveedor_whatsapp: "meta"
+  proveedor_whatsapp: "twilio"

@@ -36,3 +36,7 @@ class ProveedorWhatsApp(ABC):
     async def validar_webhook(self, request: Request) -> dict | int | None:
         """Verificación GET del webhook (solo Meta la requiere). Retorna respuesta o None."""
         return None
+
+    async def enviar_media(self, telefono: str, media_url: str, caption: str = "") -> bool:
+        """Envía multimedia. Override en proveedores que lo soporten."""
+        return False

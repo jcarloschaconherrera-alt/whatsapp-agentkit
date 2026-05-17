@@ -1,14 +1,18 @@
 # agent/tools.py — Herramientas del agente Leo Guadarrama Trading Academy
-# Generado por AgentKit
+# Generado por AgentKit — Extendido para Recolección de Datos Reto 200→400
 
 """
 Herramientas específicas del negocio.
-Casos de uso: FAQ sobre NOA, calificación de leads y soporte post-venta.
+Casos de uso: FAQ sobre NOA, calificación de leads, soporte post-venta,
+y recolección estructurada de datos del flujo Reto 200→400.
 """
 
 import os
+import re
+import httpx
 import yaml
 import logging
+from agent.memory import actualizar_lead, obtener_lead
 
 logger = logging.getLogger("agentkit")
 
@@ -67,6 +71,273 @@ def registrar_lead(telefono: str, nombre: str = "", interes: str = "") -> str:
     """
     logger.info(f"Nuevo lead registrado — Tel: {telefono}, Nombre: {nombre}, Interés: {interes}")
     return f"Lead registrado: {nombre or telefono} interesado en {interes or 'el sistema NOA'}"
+
+
+# ---------------------------------------------------------------------------
+# Referidos del Reto 200→400
+# ---------------------------------------------------------------------------
+
+LINK_BROKER_LEO = "https://client.ebccrm.com/signup?linkCode=U6913720-e01"
+LINK_BROKER_JOSUE = "https://client.myebc.co/signup?linkcode=F9090709-e01"
+
+
+def detectar_ref_reto(texto: str) -> str:
+    """
+    Detecta qué referido debe usarse para el Reto 200→400.
+
+    - Si el mensaje menciona Josue/Josué/maestro Josue/nuestro Josue o trae
+      metadata [ref:josue], retorna "josue".
+    - En cualquier otro caso retorna "leo".
+    """
+    texto_lower = texto.lower()
+    if "[ref:josue]" in texto_lower:
+        return "josue"
+
+    menciones_josue = (
+        "josue",
+        "josué",
+        "maestro josue",
+        "maestro josué",
+        "nuestro josue",
+        "nuestro josué",
+    )
+    if any(mencion in texto_lower for mencion in menciones_josue):
+        return "josue"
+
+    return "leo"
+
+
+def obtener_link_broker_por_ref(ref: str) -> str:
+    """Retorna el link de broker correspondiente al referido detectado."""
+    return LINK_BROKER_JOSUE if ref.lower() == "josue" else LINK_BROKER_LEO
+
+
+def es_trigger_reto_inicial(texto: str) -> bool:
+    """Detecta frases iniciales del Reto 200→400, incluyendo variantes con Josue."""
+    texto_lower = texto.lower()
+    frases = (
+        "me interesa el reto de 200 a 400",
+        "me interesa el reto 200 a 400",
+        "quiero el reto de 200 a 400",
+        "quiero entrar al reto 200-400",
+        "quiero entrar al reto de 200 a 400",
+        "quiero el reto 200-400",
+        "el reto de 200 a 400",
+        "reto 200 400",
+        "reto 200 a 400",
+        "reto de 200",
+        "quiero el reto",
+        "reto con josue",
+        "reto con josué",
+        "maestro josue",
+        "maestro josué",
+        "nuestro josue",
+        "nuestro josué",
+    )
+    return any(frase in texto_lower for frase in frases)
+
+
+def construir_mensaje_reto_inicial(texto: str) -> str:
+    """Construye el mensaje inicial del Reto 200→400 con el link correcto."""
+    ref = detectar_ref_reto(texto)
+    link = obtener_link_broker_por_ref(ref)
+    return (
+        "Perfecto, te explico los primeros pasos 👇\n\n"
+        "Paso 1️⃣\n"
+        "Registro y verificación en el broker\n"
+        f"🔗 Link: {link}\n"
+        "🎥 Video donde te explico todo a detalle: https://youtu.be/FwJ1QDCII3A\n\n"
+        "Paso 2️⃣\n"
+        "Fondear tu cuenta con $200 USD\n\n"
+        "Cuando ya tengas estos dos pasos listos, avísame y te doy el siguiente paso"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Recolección estructurada de datos — Reto 200→400
+# ---------------------------------------------------------------------------
+
+async def guardar_dato_lead(telefono: str, campo: str, valor: str) -> bool:
+    """
+    Guarda un dato capturado durante la conversación en el perfil del lead.
+
+    Campos válidos: nombre, email, cumpleanos, producto_interes, notas
+
+    Uso desde brain.py (extracción silenciosa):
+        await guardar_dato_lead(telefono, "nombre", "Juan")
+        await guardar_dato_lead(telefono, "email", "juan@gmail.com")
+        await guardar_dato_lead(telefono, "cumpleanos", "15 de marzo")
+
+    Retorna True si se guardó, False si el campo no es válido.
+    """
+    campos_permitidos = {"nombre", "email", "cumpleanos", "producto_interes", "notas"}
+    if campo not in campos_permitidos:
+        logger.warning(f"guardar_dato_lead: campo '{campo}' no permitido")
+        return False
+
+    ok = await actualizar_lead(telefono, **{campo: valor})
+    if ok:
+        logger.info(f"Dato capturado — {telefono} | {campo}: {valor}")
+    return ok
+
+
+async def actualizar_etapa_reto(telefono: str, nueva_etapa: str) -> bool:
+    """
+    Avanza la etapa del lead en la máquina de estados del reto.
+
+    Etapas válidas:
+        nuevo → paso1_enviado → paso1_confirmado →
+        paso2_enviado → paso2_confirmado → completado
+        (o: follow_up_24h | follow_up_72h | inactivo)
+
+    El agente debe llamar esta función cada vez que:
+    - Envía el Paso 1 → actualizar_etapa_reto(tel, "paso1_enviado")
+    - El usuario confirma Paso 1 → actualizar_etapa_reto(tel, "paso1_confirmado")
+    - Envía instrucción de fondear → actualizar_etapa_reto(tel, "paso2_enviado")
+    - El usuario confirma Paso 2 → actualizar_etapa_reto(tel, "paso2_confirmado")
+    - Se envía el link del grupo → actualizar_etapa_reto(tel, "completado")
+    """
+    etapas_validas = {
+        # Reto 200→400 (existentes)
+        "nuevo", "paso1_enviado", "paso1_confirmado",
+        "paso2_enviado", "paso2_confirmado", "completado",
+        "follow_up_24h", "follow_up_72h", "inactivo",
+        # Sesión en vivo (existente)
+        "sesion_bienvenida_enviada", "sesion_confirmada",
+        # Nuevas — según botón de origen (website buttons B1-B8)
+        "calificacion_consultoria",   # B1+B2 — CTA navbar/hero + EMPECEMOS
+        "calificacion_sistema",       # B3 — Origin story "saber más"
+        "calificacion_acceso",        # B4 — Trabaja "Quiero acceso"
+        "calificacion_herramientas",  # B5 — Trabaja "Ver herramientas"
+        "calificacion_capitalizar",   # B6 — Trabaja "Capitalizar"
+        "calificacion_curso",         # B7 — Curso section CTA
+        "escalado_equipo",            # B8 — Footer "Contacto"
+    }
+    if nueva_etapa not in etapas_validas:
+        logger.warning(f"actualizar_etapa_reto: etapa '{nueva_etapa}' no reconocida")
+        return False
+
+    ok = await actualizar_lead(telefono, etapa_reto=nueva_etapa)
+    if ok:
+        logger.info(f"Etapa actualizada — {telefono} → {nueva_etapa}")
+    return ok
+
+
+async def notificar_equipo(telefono: str, evento: str = "completado") -> bool:
+    """
+    Envía una notificación al WhatsApp del equipo cuando un lead completa el reto.
+
+    El mensaje incluye el perfil completo del lead: nombre, email, cumpleaños, etapa.
+    Requiere EQUIPO_WHATSAPP_TOKEN y EQUIPO_PHONE_NUMBER_ID en .env
+    (puede ser el mismo token de Meta Cloud API del agente).
+
+    Retorna True si el mensaje se envió exitosamente.
+    """
+    token = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
+    phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+    numero_equipo = os.getenv("EQUIPO_WHATSAPP_NUMERO", "")  # ej: "521234567890"
+
+    if not all([token, phone_id, numero_equipo]):
+        logger.warning("notificar_equipo: faltan variables EQUIPO_WHATSAPP_NUMERO, WHATSAPP_ACCESS_TOKEN o WHATSAPP_PHONE_NUMBER_ID")
+        return False
+
+    # Obtener perfil del lead
+    lead = await obtener_lead(telefono)
+    nombre = lead.nombre or "Sin nombre"
+    email = lead.email or "Sin email"
+    cumple = lead.cumpleanos or "Sin fecha"
+    etapa = lead.etapa_reto
+
+    eventos_emoji = {
+        "completado": "✅",
+        "paso1_confirmado": "1️⃣",
+        "paso2_confirmado": "2️⃣",
+    }
+    emoji = eventos_emoji.get(evento, "📋")
+
+    mensaje = (
+        f"{emoji} *Nuevo lead — Reto 200→400*\n\n"
+        f"📱 Tel: {telefono}\n"
+        f"👤 Nombre: {nombre}\n"
+        f"📧 Email: {email}\n"
+        f"🎂 Cumpleaños: {cumple}\n"
+        f"📍 Etapa: {etapa}\n\n"
+        f"_Evento: {evento}_"
+    )
+
+    url = f"https://graph.facebook.com/v19.0/{phone_id}/messages"
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": numero_equipo,
+        "type": "text",
+        "text": {"body": mensaje}
+    }
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, json=payload, headers=headers, timeout=10)
+            resp.raise_for_status()
+            logger.info(f"Equipo notificado — evento: {evento}, lead: {telefono}")
+            return True
+    except Exception as e:
+        logger.error(f"notificar_equipo error: {e}")
+        return False
+
+
+def extraer_email_de_texto(texto: str) -> str | None:
+    """
+    Extrae un email de un texto libre usando regex.
+    Retorna el email encontrado o None.
+    """
+    patron = r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
+    match = re.search(patron, texto)
+    return match.group(0).lower() if match else None
+
+
+def extraer_fecha_cumpleanos(texto: str) -> str | None:
+    """
+    Extrae una fecha de cumpleaños de texto libre.
+    Detecta formatos como: "15 de marzo", "15/03", "15-03", "marzo 15", "el 3 de abril".
+    Retorna la fecha como string normalizado o None.
+    """
+    meses = {
+        "enero": "01", "febrero": "02", "marzo": "03", "abril": "04",
+        "mayo": "05", "junio": "06", "julio": "07", "agosto": "08",
+        "septiembre": "09", "octubre": "10", "noviembre": "11", "diciembre": "12"
+    }
+
+    texto_lower = texto.lower()
+
+    # Patrón: "15 de marzo" o "el 3 de abril"
+    patron_texto = r"(?:el\s+)?(\d{1,2})\s+de\s+(" + "|".join(meses.keys()) + r")"
+    match = re.search(patron_texto, texto_lower)
+    if match:
+        dia = match.group(1).zfill(2)
+        mes = meses[match.group(2)]
+        return f"{dia}/{mes}"
+
+    # Patrón: "marzo 15"
+    patron_inverso = r"(" + "|".join(meses.keys()) + r")\s+(\d{1,2})"
+    match = re.search(patron_inverso, texto_lower)
+    if match:
+        mes = meses[match.group(1)]
+        dia = match.group(2).zfill(2)
+        return f"{dia}/{mes}"
+
+    # Patrón numérico: "15/03" o "15-03"
+    patron_num = r"\b(\d{1,2})[/\-](\d{1,2})\b"
+    match = re.search(patron_num, texto)
+    if match:
+        dia = match.group(1).zfill(2)
+        mes = match.group(2).zfill(2)
+        if 1 <= int(dia) <= 31 and 1 <= int(mes) <= 12:
+            return f"{dia}/{mes}"
+
+    return None
 
 
 def calificar_lead(perfil: str) -> str:

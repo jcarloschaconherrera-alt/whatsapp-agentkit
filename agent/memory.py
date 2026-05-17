@@ -1,16 +1,18 @@
-# agent/memory.py — Memoria de conversaciones con SQLite
-# Generado por AgentKit
+# agent/memory.py — Memoria de conversaciones y perfiles de leads con SQLite
+# Generado por AgentKit — Extendido para Recolección de Datos Reto 200→400
 
 """
-Sistema de memoria del agente. Guarda el historial de conversaciones
-por número de teléfono usando SQLite (local) o PostgreSQL (producción).
+Sistema de memoria del agente. Guarda:
+- Historial de conversaciones por número de teléfono (tabla mensajes)
+- Perfil estructurado de cada lead (tabla leads)
 """
 
 import os
 from datetime import datetime
+from typing import Optional
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import String, Text, DateTime, select, Integer
+from sqlalchemy import String, Text, DateTime, select, Integer, update
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -39,6 +41,42 @@ class Mensaje(Base):
     role: Mapped[str] = mapped_column(String(20))  # "user" o "assistant"
     content: Mapped[str] = mapped_column(Text)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Modelo Lead — perfil estructurado de cada prospecto
+# ---------------------------------------------------------------------------
+
+class Lead(Base):
+    """
+    Perfil estructurado de un prospecto.
+    Se crea en el primer mensaje y se enriquece durante la conversación.
+
+    Etapas del reto (etapa_reto):
+      nuevo            → primer contacto recibido
+      paso1_enviado    → agente mandó link del broker
+      paso1_confirmado → usuario confirmó registro en broker
+      paso2_enviado    → agente mandó instrucción de fondear $200
+      paso2_confirmado → usuario confirmó fondeo
+      completado       → se envió link del grupo + se notificó al equipo
+      follow_up_24h    → sin respuesta 24h después del último envío
+      follow_up_72h    → sin respuesta 72h (último intento)
+      inactivo         → sin respuesta tras los dos follow-ups
+    """
+    __tablename__ = "leads"
+
+    telefono: Mapped[str] = mapped_column(String(50), primary_key=True)
+    nombre: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    cumpleanos: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # "15 de marzo" o "15/03"
+    fuente: Mapped[str] = mapped_column(String(50), default="whatsapp")           # "meta_ad" | "organico" | "whatsapp"
+    etapa_reto: Mapped[str] = mapped_column(String(50), default="nuevo")
+    score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    clasificacion: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)  # caliente|calificado|tibio|frio
+    producto_interes: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    fecha_registro: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    fecha_ultima_actividad: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    notas: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 async def inicializar_db():
@@ -128,3 +166,93 @@ async def limpiar_historial(telefono: str):
         for msg in mensajes:
             await session.delete(msg)
         await session.commit()
+
+
+# ---------------------------------------------------------------------------
+# CRUD de Leads
+# ---------------------------------------------------------------------------
+
+async def crear_lead(telefono: str, fuente: str = "whatsapp") -> Lead:
+    """
+    Crea un nuevo lead con etapa 'nuevo'.
+    Si ya existe, no lo sobrescribe — retorna el existente.
+    """
+    async with async_session() as session:
+        # Verificar si ya existe
+        existente = await session.get(Lead, telefono)
+        if existente:
+            return existente
+
+        lead = Lead(
+            telefono=telefono,
+            fuente=fuente,
+            etapa_reto="nuevo",
+            fecha_registro=datetime.utcnow(),
+            fecha_ultima_actividad=datetime.utcnow(),
+        )
+        session.add(lead)
+        await session.commit()
+        await session.refresh(lead)
+        return lead
+
+
+async def obtener_lead(telefono: str) -> Optional[Lead]:
+    """Retorna el perfil del lead o None si no existe."""
+    async with async_session() as session:
+        return await session.get(Lead, telefono)
+
+
+async def actualizar_lead(telefono: str, **campos) -> bool:
+    """
+    Actualiza uno o varios campos del lead.
+
+    Uso:
+        await actualizar_lead(telefono, nombre="Juan", email="juan@mail.com")
+        await actualizar_lead(telefono, etapa_reto="paso1_confirmado")
+
+    Retorna True si el lead existía y se actualizó, False si no existía.
+    """
+    campos_validos = {
+        "nombre", "email", "cumpleanos", "fuente", "etapa_reto",
+        "score", "clasificacion", "producto_interes", "notas"
+    }
+    actualizar = {k: v for k, v in campos.items() if k in campos_validos}
+    if not actualizar:
+        return False
+
+    actualizar["fecha_ultima_actividad"] = datetime.utcnow()
+
+    async with async_session() as session:
+        stmt = (
+            update(Lead)
+            .where(Lead.telefono == telefono)
+            .values(**actualizar)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.rowcount > 0
+
+
+async def obtener_todos_leads() -> list[dict]:
+    """Retorna todos los leads para el CRM, ordenados por actividad reciente."""
+    async with async_session() as session:
+        query = select(Lead).order_by(Lead.fecha_ultima_actividad.desc())
+        result = await session.execute(query)
+        leads = result.scalars().all()
+        return [
+            {
+                "telefono": l.telefono,
+                "nombre": l.nombre,
+                "email": l.email,
+                "cumpleanos": l.cumpleanos,
+                "fuente": l.fuente,
+                "etapa_reto": l.etapa_reto,
+                "score": l.score,
+                "clasificacion": l.clasificacion,
+                "producto_interes": l.producto_interes,
+                "fecha_registro": l.fecha_registro.isoformat(),
+                "fecha_ultima_actividad": l.fecha_ultima_actividad.isoformat(),
+                "notas": l.notas,
+            }
+            for l in leads
+        ]

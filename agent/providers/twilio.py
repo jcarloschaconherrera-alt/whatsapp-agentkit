@@ -83,3 +83,37 @@ class ProveedorTwilio(ProveedorWhatsApp):
                 return False
             logger.info(f"Mensaje enviado a {telefono} via Twilio")
             return True
+
+    async def enviar_media(self, telefono: str, media_url: str, caption: str = "") -> bool:
+        """Envía video/imagen via Twilio usando MediaUrl."""
+        if not all([self.account_sid, self.auth_token, self.phone_number]):
+            logger.warning("Variables de Twilio no configuradas — media no enviado")
+            return False
+
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{self.account_sid}/Messages.json"
+        credentials = base64.b64encode(
+            f"{self.account_sid}:{self.auth_token}".encode()
+        ).decode()
+
+        from_number = self.phone_number
+        if not from_number.startswith("whatsapp:"):
+            from_number = f"whatsapp:{from_number}"
+
+        to_number = telefono
+        if not to_number.startswith("whatsapp:"):
+            to_number = f"whatsapp:{to_number}"
+
+        data = {
+            "From": from_number,
+            "To": to_number,
+            "MediaUrl": media_url,
+            "Body": caption,
+        }
+
+        async with httpx.AsyncClient() as client:
+            r = await client.post(url, data=data, headers={"Authorization": f"Basic {credentials}"})
+            if r.status_code not in (200, 201):
+                logger.error(f"Error Twilio media: {r.status_code} — {r.text}")
+                return False
+            logger.info(f"Media enviado a {telefono} via Twilio")
+            return True

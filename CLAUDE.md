@@ -2,6 +2,11 @@
 
 > CEREBRO de AgentKit. Claude Code lo lee automáticamente para guiar al usuario a construir su agente de WhatsApp. NO modificar manualmente.
 
+## Memoria persistente del proyecto
+
+Antes de hacer cambios, lee también `docs/PROJECT_MEMORY.md`.
+Dato crítico: este proyecto `whatsapp-agentkit` vive en Cloudflare y su proveedor real de WhatsApp es Twilio.
+
 ---
 
 ## 1. Identidad del sistema

@@ -18,7 +18,15 @@
       "Write",
       "Edit",
       "Glob",
-      "Grep"
+      "Grep",
+      "Bash(chmod 400 /Users/jcarloschacon/Dev/leo-academia-trade/leo-wa-key1.pem)",
+      "Bash(ssh -i /Users/jcarloschacon/Dev/leo-academia-trade/leo-wa-key1.pem -o StrictHostKeyChecking=no -o ConnectTimeout=15 ubuntu@13.222.174.91 'echo CONEXION_OK && whoami && pwd')",
+      "Read(//Users/jcarloschacon/Dev/leo-academia-trade/leo-guadarrama/rag/**)",
+      "Bash(npx vercel *)",
+      "Bash(vercel --prod --yes)"
     ]
-  }
+  },
+  "disabledMcpjsonServers": [
+    "nanobanana"
+  ]
 }

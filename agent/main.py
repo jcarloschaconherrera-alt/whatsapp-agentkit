@@ -11,6 +11,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -18,8 +19,20 @@ from dotenv import load_dotenv
 
 from fastapi.security import APIKeyHeader
 from agent.brain import generar_respuesta
-from agent.memory import inicializar_db, guardar_mensaje, obtener_historial, obtener_todos_contactos, obtener_conversacion_completa
+from agent.memory import (
+    inicializar_db, guardar_mensaje, obtener_historial,
+    obtener_todos_contactos, obtener_conversacion_completa,
+    crear_lead, obtener_todos_leads,
+)
 from agent.providers import obtener_proveedor
+from agent.scheduler import scheduler
+from agent.tools import (
+    actualizar_etapa_reto,
+    construir_mensaje_reto_inicial,
+    detectar_ref_reto,
+    es_trigger_reto_inicial,
+    guardar_dato_lead,
+)
 
 load_dotenv()
 
@@ -39,12 +52,15 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Inicializa la base de datos al arrancar el servidor."""
+    """Inicializa la base de datos y el scheduler al arrancar el servidor."""
     await inicializar_db()
+    scheduler.start()
     logger.info("Base de datos inicializada")
+    logger.info("Scheduler de follow-ups iniciado")
     logger.info(f"Servidor AgentKit corriendo en puerto {PORT}")
     logger.info(f"Proveedor de WhatsApp: {proveedor.__class__.__name__}")
     yield
+    scheduler.shutdown()
 
 
 app = FastAPI(
@@ -58,6 +74,25 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 CRM_API_KEY = os.getenv("CRM_API_KEY", "")
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def es_trigger_sesion(texto: str) -> bool:
+    """Detecta todas las frases que activan el flujo de sesión en vivo."""
+    texto_lower = texto.lower()
+    frases = [
+        "confirmar mi lugar en la sesión",
+        "confirmar mi lugar en la sesion",
+        "confirmar lugar sesión gratuita",
+        "confirmar lugar sesion gratuita",
+        "quiero confirmar mi lugar",
+        "sesión gratuita",
+        "sesion gratuita",
+        "me registré para la sesión",
+        "me registré para la sesion",
+        "me registre para la sesión",
+        "me registre para la sesion",
+    ]
+    return any(frase in texto_lower for frase in frases)
 
 
 async def verificar_crm_key(key: str = Depends(api_key_header)):
@@ -100,11 +135,22 @@ async def webhook_handler(request: Request):
 
             logger.info(f"Mensaje de {msg.telefono}: {msg.texto}")
 
+            # Crear perfil de lead si es el primer contacto (idempotente — no duplica)
+            fuente = os.getenv("FUENTE_DEFAULT", "whatsapp")
+            await crear_lead(msg.telefono, fuente=fuente)
+
             # Obtener historial ANTES de guardar el mensaje actual
             historial = await obtener_historial(msg.telefono)
 
-            # Generar respuesta con Claude
-            respuesta = await generar_respuesta(msg.texto, historial)
+            # Reto 200→400: respuesta determinística para usar el referido correcto (Leo/Josue)
+            if es_trigger_reto_inicial(msg.texto):
+                ref_reto = detectar_ref_reto(msg.texto)
+                respuesta = construir_mensaje_reto_inicial(msg.texto)
+                await guardar_dato_lead(msg.telefono, "notas", f"ref_reto={ref_reto}")
+                await actualizar_etapa_reto(msg.telefono, "paso1_enviado")
+            else:
+                # Generar respuesta con Claude (pasa telefono para extracción silenciosa de datos)
+                respuesta = await generar_respuesta(msg.texto, historial, telefono=msg.telefono)
 
             # Guardar mensaje del usuario Y respuesta del agente en memoria
             await guardar_mensaje(msg.telefono, "user", msg.texto)
@@ -112,6 +158,14 @@ async def webhook_handler(request: Request):
 
             # Enviar respuesta por WhatsApp via el proveedor
             await proveedor.enviar_mensaje(msg.telefono, respuesta)
+
+            # Detectar trigger de sesión → enviar video + programar follow-up
+            if es_trigger_sesion(msg.texto):
+                video_url = os.getenv("VIDEO_BIENVENIDA_URL", "")
+                if video_url:
+                    await proveedor.enviar_media(msg.telefono, video_url, "")
+                from agent.scheduler import programar_followup
+                programar_followup(msg.telefono, minutos=30)
 
             logger.info(f"Respuesta a {msg.telefono}: {respuesta}")
 
@@ -136,3 +190,73 @@ async def ver_conversacion(telefono: str, request: Request, _=Depends(verificar_
     """CRM — conversación completa de un contacto."""
     mensajes = await obtener_conversacion_completa(telefono)
     return {"telefono": telefono, "mensajes": mensajes}
+
+
+# ---------------------------------------------------------------------------
+# Endpoints de Leads (perfiles estructurados)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/leads")
+@limiter.limit("30/minute")
+async def listar_leads(request: Request, _=Depends(verificar_crm_key)):
+    """CRM — lista todos los leads con su perfil completo y etapa del reto."""
+    leads = await obtener_todos_leads()
+    return {"total": len(leads), "leads": leads}
+
+
+@app.get("/api/leads/{telefono:path}")
+@limiter.limit("30/minute")
+async def ver_lead(telefono: str, request: Request, _=Depends(verificar_crm_key)):
+    """CRM — perfil completo de un lead + conversación."""
+    from agent.memory import obtener_lead
+    lead = await obtener_lead(telefono)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead no encontrado")
+    mensajes = await obtener_conversacion_completa(telefono)
+    return {
+        "perfil": {
+            "telefono": lead.telefono,
+            "nombre": lead.nombre,
+            "email": lead.email,
+            "cumpleanos": lead.cumpleanos,
+            "fuente": lead.fuente,
+            "etapa_reto": lead.etapa_reto,
+            "score": lead.score,
+            "clasificacion": lead.clasificacion,
+            "producto_interes": lead.producto_interes,
+            "fecha_registro": lead.fecha_registro.isoformat(),
+            "fecha_ultima_actividad": lead.fecha_ultima_actividad.isoformat(),
+            "notas": lead.notas,
+        },
+        "conversacion": mensajes,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Endpoint de registro de leads desde el website
+# ---------------------------------------------------------------------------
+
+class LeadRegister(BaseModel):
+    telefono: str
+    nombre: str = ""
+    email: str = ""
+    fuente: str = "website"
+
+
+@app.post("/api/leads/register")
+@limiter.limit("30/minute")
+async def registrar_lead_website(
+    data: LeadRegister, request: Request, _=Depends(verificar_crm_key)
+):
+    """Recibe un lead del website y lo crea en la base de datos."""
+    await crear_lead(data.telefono, fuente=data.fuente)
+
+    if data.nombre or data.email:
+        from agent.tools import guardar_dato_lead
+        if data.nombre:
+            await guardar_dato_lead(data.telefono, "nombre", data.nombre)
+        if data.email:
+            await guardar_dato_lead(data.telefono, "email", data.email)
+
+    logger.info(f"Lead registrado desde website — {data.telefono} | fuente: {data.fuente}")
+    return {"status": "ok", "telefono": data.telefono}
