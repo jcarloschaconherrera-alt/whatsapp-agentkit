@@ -107,9 +107,8 @@ def obtener_video_bienvenida_reto_url(request: Request) -> str:
         return ""
 
     base_url = valor_env_publico("PUBLIC_BASE_URL").rstrip("/")
-    if not base_url and ENVIRONMENT == "production":
-        base_url = "https://leoguadarrama.com"
     if not base_url:
+        # Usar el mismo host público que recibió el webhook (ideal si Twilio entra por Cloudflare/Tunnel).
         base_url = str(request.base_url).rstrip("/")
     return f"{base_url}/media/{VIDEO_BIENVENIDA_RETO_FILENAME}"
 
