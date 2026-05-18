@@ -31,6 +31,7 @@ from agent.providers import obtener_proveedor
 from agent.scheduler import scheduler
 from agent.tools import (
     actualizar_etapa_reto,
+    construir_mensaje_grupo_reto,
     construir_mensaje_reto_inicial,
     detectar_ref_reto,
     es_trigger_reto_inicial,
@@ -217,8 +218,8 @@ async def webhook_handler(request: Request):
             await guardar_mensaje(msg.telefono, "assistant", respuesta)
 
             # Reto 200→400: primero enviar video de bienvenida, esperar procesamiento,
-            # y después mandar los pasos de registro. La pausa evita que WhatsApp muestre
-            # el texto antes del video cuando Twilio tarda en procesar el media.
+            # luego invitar al grupo del reto, y después mandar los pasos de registro.
+            # La pausa evita que WhatsApp muestre el texto antes del video cuando Twilio procesa el media.
             if video_reto_pendiente:
                 enviado = await proveedor.enviar_media(
                     msg.telefono,
@@ -230,9 +231,12 @@ async def webhook_handler(request: Request):
                     await guardar_dato_lead(msg.telefono, "notas", notas_reto)
                     await asyncio.sleep(VIDEO_BIENVENIDA_RETO_DELAY_SECONDS)
 
+                await proveedor.enviar_mensaje(msg.telefono, construir_mensaje_grupo_reto())
+                await asyncio.sleep(3)
+
             # Enviar respuesta por WhatsApp via el proveedor
             # Para el Reto, esta respuesta incluye Paso 1: link referido del broker + video YouTube,
-            # y Paso 2: fondear la cuenta con $200 USD.
+            # Paso 2: fondear $200 USD, y opción de ayuda personalizada para fondeo.
             await proveedor.enviar_mensaje(msg.telefono, respuesta)
 
             # Detectar trigger de sesión → enviar video + programar follow-up

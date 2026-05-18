@@ -79,6 +79,8 @@ def registrar_lead(telefono: str, nombre: str = "", interes: str = "") -> str:
 
 LINK_BROKER_LEO = "https://client.ebccrm.com/signup?linkCode=U6913720-e01"
 LINK_BROKER_JOSUE = "https://client.myebc.co/signup?linkcode=F9090709-e01"
+LINK_GRUPO_RETO_DEFAULT = "https://chat.whatsapp.com/LeXMzrrHrx78pVxqOIxjYf?mode=gi_t"
+VIDEO_EXPLICATIVO_RETO_URL = "https://youtu.be/FwJ1QDCII3A?t=270"
 
 
 def detectar_ref_reto(texto: str) -> str:
@@ -161,19 +163,37 @@ def es_trigger_reto_inicial(texto: str) -> bool:
     return any(frase in texto_lower for frase in frases)
 
 
+def obtener_link_grupo_reto() -> str:
+    """Retorna el link del grupo del Reto 200→400."""
+    return os.getenv("LINK_GRUPO_RETO", "").strip() or LINK_GRUPO_RETO_DEFAULT
+
+
+def construir_mensaje_grupo_reto() -> str:
+    """Mensaje intermedio para que el lead entre al grupo antes del paso a paso."""
+    link_grupo = obtener_link_grupo_reto()
+    return (
+        "Antes de avanzar, es importante que te unas al grupo del Reto 200 a 400.\n\n"
+        "Ahí vamos a compartir avisos, materiales y acompañamiento importante para que no te pierdas ningún paso.\n\n"
+        f"Únete aquí:\n{link_grupo}\n\n"
+        "Cuando entres, vuelve aquí y escribe: Ya entré al grupo"
+    )
+
+
 def construir_mensaje_reto_inicial(texto: str) -> str:
     """Construye el mensaje inicial del Reto 200→400 con el link correcto."""
     ref = detectar_ref_reto(texto)
     link = obtener_link_broker_por_ref(ref)
     return (
-        "Perfecto, te explico los primeros pasos 👇\n\n"
+        "Perfecto, ahora sí te dejo el paso a paso del Reto 200 a 400 👇\n\n"
         "Paso 1️⃣\n"
         "Registro y verificación en el broker\n"
         f"🔗 Link: {link}\n"
-        "🎥 Video donde te explico todo a detalle desde el minuto 4:30: https://youtu.be/FwJ1QDCII3A?t=270\n\n"
+        f"🎥 Video explicativo desde el minuto 4:30: {VIDEO_EXPLICATIVO_RETO_URL}\n\n"
         "Paso 2️⃣\n"
         "Fondear tu cuenta con $200 USD\n\n"
-        "Cuando ya tengas estos dos pasos listos, avísame y te doy el siguiente paso"
+        "Si necesitas ayuda personalizada para el fondeo, responde: Ayuda para fondeo\n\n"
+        "Cuando ya esté fondeada tu cuenta, responde: Ya fondeé\n"
+        "Ahí te doy el siguiente paso del reto."
     )
 
 

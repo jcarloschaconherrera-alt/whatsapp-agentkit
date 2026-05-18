@@ -176,6 +176,28 @@ async def generar_respuesta(mensaje: str, historial: list[dict], telefono: str =
 
     system_prompt = cargar_system_prompt()
 
+    if telefono:
+        try:
+            from agent.memory import obtener_lead
+            lead = await obtener_lead(telefono)
+            if lead and (
+                lead.etapa_reto != "nuevo"
+                or "ref_reto=" in (lead.notas or "")
+                or "reto" in (lead.producto_interes or "").lower()
+            ):
+                system_prompt += (
+                    "\n\n# CONTEXTO ACTUAL DEL LEAD\n"
+                    "Este usuario ya está dentro del flujo del Reto 200 a 400. "
+                    "Mantén toda la conversación enfocada en el reto, el grupo, el registro, "
+                    "el fondeo de $200 USD, ayuda para fondeo y el siguiente paso después de fondear. "
+                    "No uses menús genéricos A/B/C/D ni ejemplos de otros flujos. "
+                    "No uses asteriscos para negritas en WhatsApp.\n"
+                    f"Etapa actual: {lead.etapa_reto}\n"
+                    f"Notas: {lead.notas or 'sin notas'}"
+                )
+        except Exception as e:
+            logger.debug(f"No se pudo cargar contexto del lead: {e}")
+
     # Construir mensajes para la API
     mensajes = []
     for msg in historial:
