@@ -85,9 +85,12 @@ def detectar_ref_reto(texto: str) -> str:
     """
     Detecta qué referido debe usarse para el Reto 200→400.
 
-    - Si el mensaje menciona Josue/Josué/maestro Josue/nuestro Josue o trae
-      metadata [ref:josue], retorna "josue".
-    - En cualquier otro caso retorna "leo".
+    Recomendado para campañas visibles al cliente:
+    - Leo: usar texto natural como "Quiero el Reto 200 a 400 con Leo".
+    - Josué: usar texto natural como "Quiero el Reto 200 a 400 con Maestro Josué".
+
+    Se mantiene compatibilidad con [ref:josue] para links antiguos, pero ya no es necesario
+    mostrar esa metadata al cliente.
     """
     texto_lower = texto.lower()
     if "[ref:josue]" in texto_lower:
@@ -100,6 +103,14 @@ def detectar_ref_reto(texto: str) -> str:
         "maestro josué",
         "nuestro josue",
         "nuestro josué",
+        "con josue",
+        "con josué",
+        "de josue",
+        "de josué",
+        "activacion josue",
+        "activación josué",
+        "campaña josue",
+        "campaña josué",
     )
     if any(mencion in texto_lower for mencion in menciones_josue):
         return "josue"
@@ -127,8 +138,21 @@ def es_trigger_reto_inicial(texto: str) -> bool:
         "reto 200 a 400",
         "reto de 200",
         "quiero el reto",
+        # Variantes limpias para campañas visibles al cliente (sin [ref:...])
+        "reto con leo",
+        "reto de leo",
+        "activación leo",
+        "activacion leo",
+        "campaña leo",
         "reto con josue",
         "reto con josué",
+        "reto de josue",
+        "reto de josué",
+        "activación josue",
+        "activación josué",
+        "activacion josue",
+        "campaña josue",
+        "campaña josué",
         "maestro josue",
         "maestro josué",
         "nuestro josue",
@@ -146,7 +170,7 @@ def construir_mensaje_reto_inicial(texto: str) -> str:
         "Paso 1️⃣\n"
         "Registro y verificación en el broker\n"
         f"🔗 Link: {link}\n"
-        "🎥 Video donde te explico todo a detalle: https://youtu.be/FwJ1QDCII3A\n\n"
+        "🎥 Video donde te explico todo a detalle desde el minuto 4:30: https://youtu.be/FwJ1QDCII3A?t=270\n\n"
         "Paso 2️⃣\n"
         "Fondear tu cuenta con $200 USD\n\n"
         "Cuando ya tengas estos dos pasos listos, avísame y te doy el siguiente paso"
