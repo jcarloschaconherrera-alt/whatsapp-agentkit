@@ -31,9 +31,13 @@ from agent.providers import obtener_proveedor
 from agent.scheduler import scheduler
 from agent.tools import (
     actualizar_etapa_reto,
+    construir_mensaje_ayuda_fondeo,
     construir_mensaje_grupo_reto,
+    construir_mensaje_link_grupo_reto,
     construir_mensaje_reto_inicial,
     detectar_ref_reto,
+    es_ayuda_fondeo,
+    es_confirmacion_unirme_grupo_reto,
     es_trigger_reto_inicial,
     guardar_dato_lead,
 )
@@ -193,51 +197,65 @@ async def webhook_handler(request: Request):
             # Obtener historial ANTES de guardar el mensaje actual
             historial = await obtener_historial(msg.telefono)
 
-            video_reto_pendiente = False
-            video_reto_url = ""
             notas_reto = lead.notas or ""
+            lead_en_reto = lead.etapa_reto != "nuevo" or "ref_reto=" in notas_reto
 
-            # Reto 200→400: respuesta determinística para usar el referido correcto (Leo/Josue)
-            if es_trigger_reto_inicial(msg.texto):
+            if es_ayuda_fondeo(msg.texto) and lead_en_reto:
+                respuesta = construir_mensaje_ayuda_fondeo()
+                await guardar_mensaje(msg.telefono, "user", msg.texto)
+                await guardar_mensaje(msg.telefono, "assistant", respuesta)
+                await proveedor.enviar_mensaje(msg.telefono, respuesta)
+
+            elif es_confirmacion_unirme_grupo_reto(msg.texto) and lead_en_reto:
+                ref_guardado = "josue" if "ref_reto=josue" in notas_reto else "leo"
+                texto_ref = "maestro josue" if ref_guardado == "josue" else "leo"
+                mensaje_link_grupo = construir_mensaje_link_grupo_reto()
+                mensaje_pasos = construir_mensaje_reto_inicial(texto_ref)
+                respuesta = f"{mensaje_link_grupo}\n\n---\n\n{mensaje_pasos}"
+
+                await actualizar_etapa_reto(msg.telefono, "grupo_enviado")
+                await guardar_mensaje(msg.telefono, "user", msg.texto)
+                await guardar_mensaje(msg.telefono, "assistant", respuesta)
+                await proveedor.enviar_mensaje(msg.telefono, mensaje_link_grupo)
+                await asyncio.sleep(3)
+                await proveedor.enviar_mensaje(msg.telefono, mensaje_pasos)
+                await actualizar_etapa_reto(msg.telefono, "paso1_enviado")
+
+            # Reto 200→400: primer contacto. NO enviar pasos todavía.
+            # Primero video, luego mensaje con botón "Unirme al grupo".
+            elif es_trigger_reto_inicial(msg.texto):
                 ref_reto = detectar_ref_reto(msg.texto)
-                respuesta = construir_mensaje_reto_inicial(msg.texto)
+                respuesta = construir_mensaje_grupo_reto()
                 notas_reto = anexar_marca_notas(notas_reto, f"ref_reto={ref_reto}")
                 await guardar_dato_lead(msg.telefono, "notas", notas_reto)
-                await actualizar_etapa_reto(msg.telefono, "paso1_enviado")
+                await actualizar_etapa_reto(msg.telefono, "grupo_pendiente")
+
+                await guardar_mensaje(msg.telefono, "user", msg.texto)
+                await guardar_mensaje(msg.telefono, "assistant", respuesta)
 
                 video_reto_url = obtener_video_bienvenida_reto_url(request)
                 video_reto_pendiente = bool(
                     video_reto_url and VIDEO_BIENVENIDA_RETO_MARKER not in notas_reto
                 )
+                if video_reto_pendiente:
+                    enviado = await proveedor.enviar_media(msg.telefono, video_reto_url, "")
+                    if enviado:
+                        notas_reto = anexar_marca_notas(notas_reto, VIDEO_BIENVENIDA_RETO_MARKER)
+                        await guardar_dato_lead(msg.telefono, "notas", notas_reto)
+                        await asyncio.sleep(VIDEO_BIENVENIDA_RETO_DELAY_SECONDS)
+
+                await proveedor.enviar_botones(
+                    msg.telefono,
+                    respuesta,
+                    ["Unirme al grupo", "Ayuda para fondeo"],
+                )
+
             else:
                 # Generar respuesta con Claude (pasa telefono para extracción silenciosa de datos)
                 respuesta = await generar_respuesta(msg.texto, historial, telefono=msg.telefono)
-
-            # Guardar mensaje del usuario Y respuesta del agente en memoria
-            await guardar_mensaje(msg.telefono, "user", msg.texto)
-            await guardar_mensaje(msg.telefono, "assistant", respuesta)
-
-            # Reto 200→400: primero enviar video de bienvenida, esperar procesamiento,
-            # luego invitar al grupo del reto, y después mandar los pasos de registro.
-            # La pausa evita que WhatsApp muestre el texto antes del video cuando Twilio procesa el media.
-            if video_reto_pendiente:
-                enviado = await proveedor.enviar_media(
-                    msg.telefono,
-                    video_reto_url,
-                    ""
-                )
-                if enviado:
-                    notas_reto = anexar_marca_notas(notas_reto, VIDEO_BIENVENIDA_RETO_MARKER)
-                    await guardar_dato_lead(msg.telefono, "notas", notas_reto)
-                    await asyncio.sleep(VIDEO_BIENVENIDA_RETO_DELAY_SECONDS)
-
-                await proveedor.enviar_mensaje(msg.telefono, construir_mensaje_grupo_reto())
-                await asyncio.sleep(3)
-
-            # Enviar respuesta por WhatsApp via el proveedor
-            # Para el Reto, esta respuesta incluye Paso 1: link referido del broker + video YouTube,
-            # Paso 2: fondear $200 USD, y opción de ayuda personalizada para fondeo.
-            await proveedor.enviar_mensaje(msg.telefono, respuesta)
+                await guardar_mensaje(msg.telefono, "user", msg.texto)
+                await guardar_mensaje(msg.telefono, "assistant", respuesta)
+                await proveedor.enviar_mensaje(msg.telefono, respuesta)
 
             # Detectar trigger de sesión → enviar video + programar follow-up
             if es_trigger_sesion(msg.texto):

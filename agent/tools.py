@@ -169,13 +169,65 @@ def obtener_link_grupo_reto() -> str:
 
 
 def construir_mensaje_grupo_reto() -> str:
-    """Mensaje intermedio para que el lead entre al grupo antes del paso a paso."""
-    link_grupo = obtener_link_grupo_reto()
+    """Mensaje con llamada a acción para que el lead confirme que quiere entrar al grupo."""
     return (
         "Antes de avanzar, es importante que te unas al grupo del Reto 200 a 400.\n\n"
         "Ahí vamos a compartir avisos, materiales y acompañamiento importante para que no te pierdas ningún paso.\n\n"
-        f"Únete aquí:\n{link_grupo}\n\n"
-        "Cuando entres, vuelve aquí y escribe: Ya entré al grupo"
+        "Toca el botón: Unirme al grupo"
+    )
+
+
+def construir_mensaje_link_grupo_reto() -> str:
+    """Envía el link del grupo después de que el usuario toca el botón."""
+    link_grupo = obtener_link_grupo_reto()
+    return (
+        "Perfecto. Aquí tienes el link para unirte al grupo del Reto 200 a 400:\n\n"
+        f"{link_grupo}\n\n"
+        "Entra al grupo y después sigue con el paso a paso que te mando ahora."
+    )
+
+
+def es_confirmacion_unirme_grupo_reto(texto: str) -> bool:
+    """Detecta cuando el usuario toca el botón o confirma que quiere entrar al grupo."""
+    texto_lower = texto.lower().strip()
+    frases = (
+        "unirme al grupo",
+        "me quiero unir al grupo",
+        "quiero unirme al grupo",
+        "ya entré al grupo",
+        "ya entre al grupo",
+        "ya estoy en el grupo",
+        "entré al grupo",
+        "entre al grupo",
+    )
+    return any(frase in texto_lower for frase in frases)
+
+
+def es_ayuda_fondeo(texto: str) -> bool:
+    """Detecta si el usuario pide ayuda personalizada para fondear."""
+    texto_lower = texto.lower().strip()
+    frases = (
+        "ayuda para fondeo",
+        "ayuda con fondeo",
+        "ayuda para fondear",
+        "ayuda con el fondeo",
+        "no puedo fondear",
+        "cómo fondeo",
+        "como fondeo",
+        "necesito ayuda para fondear",
+    )
+    return any(frase in texto_lower for frase in frases)
+
+
+def construir_mensaje_ayuda_fondeo() -> str:
+    """Respuesta corta para mantener al lead dentro del flujo del reto."""
+    return (
+        "Claro. Te puedo ayudar con el fondeo paso a paso.\n\n"
+        "Dime en qué parte estás atorado:\n"
+        "1. Registro\n"
+        "2. Verificación\n"
+        "3. Depósito\n"
+        "4. Método de pago"
     )
 
 
@@ -243,7 +295,7 @@ async def actualizar_etapa_reto(telefono: str, nueva_etapa: str) -> bool:
     """
     etapas_validas = {
         # Reto 200→400 (existentes)
-        "nuevo", "paso1_enviado", "paso1_confirmado",
+        "nuevo", "grupo_pendiente", "grupo_enviado", "paso1_enviado", "paso1_confirmado",
         "paso2_enviado", "paso2_confirmado", "completado",
         "follow_up_24h", "follow_up_72h", "inactivo",
         # Sesión en vivo (existente)

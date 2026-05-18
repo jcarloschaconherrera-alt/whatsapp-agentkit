@@ -40,3 +40,8 @@ class ProveedorWhatsApp(ABC):
     async def enviar_media(self, telefono: str, media_url: str, caption: str = "") -> bool:
         """Envía multimedia. Override en proveedores que lo soporten."""
         return False
+
+    async def enviar_botones(self, telefono: str, mensaje: str, botones: list[str]) -> bool:
+        """Envía botones/quick replies. Si el proveedor no soporta botones, usa texto fallback."""
+        opciones = "\n".join(f"- {boton}" for boton in botones)
+        return await self.enviar_mensaje(telefono, f"{mensaje}\n\nResponde con una opción:\n{opciones}")

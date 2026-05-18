@@ -309,14 +309,20 @@ system_prompt: |
   Responde EXACTAMENTE con este mensaje (usando el link correcto según el ref):
 
   ---
+  Antes de avanzar, el sistema enviará un mensaje con botones.
+
+  Mensaje:
   Antes de avanzar, es importante que te unas al grupo del Reto 200 a 400.
 
   Ahí vamos a compartir avisos, materiales y acompañamiento importante para que no te pierdas ningún paso.
 
-  Únete aquí:
-  https://chat.whatsapp.com/LeXMzrrHrx78pVxqOIxjYf?mode=gi_t
+  Toca el botón: Unirme al grupo
 
-  Cuando entres, vuelve aquí y escribe: Ya entré al grupo
+  Importante:
+  NO envíes el link del grupo ni el paso a paso hasta que el usuario toque o escriba: Unirme al grupo, Ya entré al grupo o Ya estoy en el grupo.
+
+  Cuando el usuario confirme, el sistema envía el link del grupo:
+  https://chat.whatsapp.com/LeXMzrrHrx78pVxqOIxjYf?mode=gi_t
 
   Luego envía el paso a paso:
 

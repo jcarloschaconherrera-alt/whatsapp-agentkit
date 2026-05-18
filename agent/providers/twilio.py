@@ -84,6 +84,48 @@ class ProveedorTwilio(ProveedorWhatsApp):
             logger.info(f"Mensaje enviado a {telefono} via Twilio")
             return True
 
+    async def enviar_botones(self, telefono: str, mensaje: str, botones: list[str]) -> bool:
+        """
+        Envía quick-reply buttons usando Twilio Content API si hay ContentSid configurado.
+        Si no existe ContentSid, cae a texto normal con opciones.
+        """
+        content_sid = os.getenv("TWILIO_CONTENT_SID_RETO_UNIRME_GRUPO", "").strip()
+        if not content_sid:
+            opciones = "\n".join(f"- {boton}" for boton in botones)
+            return await self.enviar_mensaje(telefono, f"{mensaje}\n\nResponde con una opción:\n{opciones}")
+
+        if not all([self.account_sid, self.auth_token, self.phone_number]):
+            logger.warning("Variables de Twilio no configuradas — botones no enviados")
+            return False
+
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{self.account_sid}/Messages.json"
+        credentials = base64.b64encode(
+            f"{self.account_sid}:{self.auth_token}".encode()
+        ).decode()
+
+        from_number = self.phone_number
+        if not from_number.startswith("whatsapp:"):
+            from_number = f"whatsapp:{from_number}"
+
+        to_number = telefono
+        if not to_number.startswith("whatsapp:"):
+            to_number = f"whatsapp:{to_number}"
+
+        data = {
+            "From": from_number,
+            "To": to_number,
+            "ContentSid": content_sid,
+        }
+
+        async with httpx.AsyncClient() as client:
+            r = await client.post(url, data=data, headers={"Authorization": f"Basic {credentials}"})
+            if r.status_code not in (200, 201):
+                logger.error(f"Error Twilio botones: {r.status_code} — {r.text}")
+                opciones = "\n".join(f"- {boton}" for boton in botones)
+                return await self.enviar_mensaje(telefono, f"{mensaje}\n\nResponde con una opción:\n{opciones}")
+            logger.info(f"Botones enviados a {telefono} via Twilio")
+            return True
+
     async def enviar_media(self, telefono: str, media_url: str, caption: str = "") -> bool:
         """Envía video/imagen via Twilio usando MediaUrl."""
         if not all([self.account_sid, self.auth_token, self.phone_number]):
