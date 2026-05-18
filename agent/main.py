@@ -7,6 +7,7 @@ Funciona con cualquier proveedor (Whapi, Meta, Twilio) gracias a la capa de prov
 """
 
 import os
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -51,6 +52,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 MEDIA_DIR = BASE_DIR / "media"
 VIDEO_BIENVENIDA_RETO_FILENAME = "bienvenida-reto-200-400.mp4"
 VIDEO_BIENVENIDA_RETO_MARKER = "video_bienvenida_reto_enviado=true"
+VIDEO_BIENVENIDA_RETO_DELAY_SECONDS = int(os.getenv("VIDEO_BIENVENIDA_RETO_DELAY_SECONDS", "8"))
 
 # Rate limiter — clave por IP real (respeta X-Forwarded-For de proxies/Railway)
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
@@ -214,7 +216,9 @@ async def webhook_handler(request: Request):
             await guardar_mensaje(msg.telefono, "user", msg.texto)
             await guardar_mensaje(msg.telefono, "assistant", respuesta)
 
-            # Reto 200→400: primero enviar video de bienvenida, luego los pasos de registro.
+            # Reto 200→400: primero enviar video de bienvenida, esperar procesamiento,
+            # y después mandar los pasos de registro. La pausa evita que WhatsApp muestre
+            # el texto antes del video cuando Twilio tarda en procesar el media.
             if video_reto_pendiente:
                 enviado = await proveedor.enviar_media(
                     msg.telefono,
@@ -224,6 +228,7 @@ async def webhook_handler(request: Request):
                 if enviado:
                     notas_reto = anexar_marca_notas(notas_reto, VIDEO_BIENVENIDA_RETO_MARKER)
                     await guardar_dato_lead(msg.telefono, "notas", notas_reto)
+                    await asyncio.sleep(VIDEO_BIENVENIDA_RETO_DELAY_SECONDS)
 
             # Enviar respuesta por WhatsApp via el proveedor
             # Para el Reto, esta respuesta incluye Paso 1: link referido del broker + video YouTube,
